@@ -47,6 +47,14 @@ use cudarc::driver::{CudaDevice, DevicePtr, DevicePtrMut};
 #[cfg(target_os = "linux")]
 use qdp_kernels::{launch_amplitude_encode_batch, launch_l2_norm_batch};
 
+#[cfg(target_os = "linux")]
+use crate::gpu::AmplitudeEncoder;
+
+#[cfg(target_os = "linux")]
+use qdp_kernels::launch_amplitude_encode;
+#[cfg(target_os = "linux")]
+use qdp_kernels::launch_amplitude_encode_f32;
+
 /// 512MB staging buffer for large Parquet row groups (reduces fragmentation)
 #[cfg(target_os = "linux")]
 const STAGE_SIZE_BYTES: usize = 512 * 1024 * 1024;
@@ -119,6 +127,198 @@ impl QdpEngine {
             state_vector.to_dlpack()
         };
         Ok(dlpack_ptr)
+    }
+
+    /// Encode from a CUDA device pointer (DLPack consumer path)
+    ///
+    /// Minimal implementation: supports amplitude encoding with float64 input pointer.
+    /// The input pointer must point to `len` f64 values on the same CUDA device.
+    ///
+    /// # Safety
+    /// `device_ptr` must be valid and remain alive until the encoding kernel completes.
+    #[cfg(target_os = "linux")]
+    pub unsafe fn encode_device_f64_ptr(
+        &self,
+        device_ptr: *const f64,
+        len: usize,
+        num_qubits: usize,
+        encoding_method: &str,
+        stream: *mut c_void,
+    ) -> Result<*mut DLManagedTensor> {
+        crate::profile_scope!("Mahout::EncodeDevicePtr");
+
+        if device_ptr.is_null() {
+            return Err(MahoutError::InvalidInput(
+                "Device pointer cannot be null".to_string(),
+            ));
+        }
+        if len == 0 {
+            return Err(MahoutError::InvalidInput(
+                "Input tensor cannot be empty".to_string(),
+            ));
+        }
+        if num_qubits == 0 {
+            return Err(MahoutError::InvalidInput(
+                "Number of qubits must be at least 1".to_string(),
+            ));
+        }
+
+        if !encoding_method.eq_ignore_ascii_case("amplitude") {
+            return Err(MahoutError::NotImplemented(
+                "Device-pointer encode currently only supports amplitude encoding".to_string(),
+            ));
+        }
+
+        let state_len = 1usize
+            .checked_shl(num_qubits as u32)
+            .ok_or_else(|| MahoutError::InvalidInput("num_qubits too large".to_string()))?;
+
+        if len > state_len {
+            return Err(MahoutError::InvalidInput(format!(
+                "Input length {} exceeds state vector size 2^{} = {}",
+                len, num_qubits, state_len
+            )));
+        }
+
+        // Allocate GPU state vector (complex f64)
+        let state_vector = {
+            crate::profile_scope!("GPU::Alloc");
+            GpuStateVector::new(&self.device, num_qubits)?
+        };
+
+        // Compute inverse norm on GPU
+        let inv_norm =
+            AmplitudeEncoder::calculate_inv_norm_gpu(&self.device, device_ptr, len, stream)?;
+
+        // Launch amplitude encode kernel directly from the input device pointer
+        let state_ptr = state_vector.ptr_f64().ok_or_else(|| {
+            MahoutError::InvalidInput(
+                "State vector precision mismatch (expected float64 buffer)".to_string(),
+            )
+        })?;
+
+        let ret = unsafe {
+            launch_amplitude_encode(
+                device_ptr,
+                state_ptr as *mut c_void,
+                len,
+                state_len,
+                inv_norm,
+                stream,
+            )
+        };
+
+        if ret != 0 {
+            return Err(MahoutError::KernelLaunch(format!(
+                "Kernel launch failed with CUDA error code: {}",
+                ret
+            )));
+        }
+
+        // Synchronize the provided stream for correctness (avoids device-wide sync).
+        unsafe {
+            let sync_ret = crate::gpu::cuda_ffi::cudaStreamSynchronize(stream);
+            if sync_ret != 0 {
+                return Err(MahoutError::Cuda(format!(
+                    "cudaStreamSynchronize failed after encode kernel: {}",
+                    sync_ret
+                )));
+            }
+        }
+
+        let state_vector = state_vector.to_precision(&self.device, self.precision)?;
+        Ok(state_vector.to_dlpack())
+    }
+
+    /// Float32 variant of device-pointer encode (amplitude only).
+    ///
+    /// # Safety
+    /// `device_ptr` must be valid and remain alive until the stream has completed.
+    #[cfg(target_os = "linux")]
+    pub unsafe fn encode_device_f32_ptr(
+        &self,
+        device_ptr: *const f32,
+        len: usize,
+        num_qubits: usize,
+        encoding_method: &str,
+        stream: *mut c_void,
+    ) -> Result<*mut DLManagedTensor> {
+        crate::profile_scope!("Mahout::EncodeDevicePtrF32");
+
+        if device_ptr.is_null() {
+            return Err(MahoutError::InvalidInput(
+                "Device pointer cannot be null".to_string(),
+            ));
+        }
+        if len == 0 {
+            return Err(MahoutError::InvalidInput(
+                "Input tensor cannot be empty".to_string(),
+            ));
+        }
+        if num_qubits == 0 {
+            return Err(MahoutError::InvalidInput(
+                "Number of qubits must be at least 1".to_string(),
+            ));
+        }
+        if !encoding_method.eq_ignore_ascii_case("amplitude") {
+            return Err(MahoutError::NotImplemented(
+                "Device-pointer encode currently only supports amplitude encoding".to_string(),
+            ));
+        }
+
+        if self.precision != Precision::Float32 {
+            return Err(MahoutError::NotImplemented(
+                "Float32 input currently requires engine precision='float32'".to_string(),
+            ));
+        }
+
+        let state_len = 1usize
+            .checked_shl(num_qubits as u32)
+            .ok_or_else(|| MahoutError::InvalidInput("num_qubits too large".to_string()))?;
+        if len > state_len {
+            return Err(MahoutError::InvalidInput(format!(
+                "Input length {} exceeds state vector size 2^{} = {}",
+                len, num_qubits, state_len
+            )));
+        }
+
+        // Allocate GPU state vector (complex64).
+        let state_vector = {
+            crate::profile_scope!("GPU::Alloc");
+            GpuStateVector::new_with_precision(&self.device, num_qubits, Precision::Float32)?
+        };
+
+        // Compute inverse norm on GPU (f32)
+        let inv_norm =
+            AmplitudeEncoder::calculate_inv_norm_gpu_f32(&self.device, device_ptr, len, stream)?;
+
+        let state_ptr = state_vector.ptr_void();
+
+        // Launch f32 amplitude encode: writes complex128 output for now (kernel writes to state_d as c_void).
+        // The kernel expects state_d points to complex128/complex64 based on its implementation; in our
+        // codebase, state_d is treated as complex128 buffer for amplitude encoding.
+        let ret = unsafe {
+            launch_amplitude_encode_f32(device_ptr, state_ptr, len, state_len, inv_norm, stream)
+        };
+
+        if ret != 0 {
+            return Err(MahoutError::KernelLaunch(format!(
+                "Kernel launch (f32) failed with CUDA error code: {}",
+                ret
+            )));
+        }
+
+        unsafe {
+            let sync_ret = crate::gpu::cuda_ffi::cudaStreamSynchronize(stream);
+            if sync_ret != 0 {
+                return Err(MahoutError::Cuda(format!(
+                    "cudaStreamSynchronize failed after encode kernel (f32): {}",
+                    sync_ret
+                )));
+            }
+        }
+
+        Ok(state_vector.to_dlpack())
     }
 
     /// Get CUDA device reference for advanced operations

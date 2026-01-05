@@ -97,6 +97,7 @@ impl QuantumEncoder for AmplitudeEncoder {
                         _device,
                         *input_slice.device_ptr() as *const f64,
                         host_data.len(),
+                        std::ptr::null_mut(),
                     )?
                 } else {
                     let norm = Preprocessor::calculate_l2_norm(host_data)?;
@@ -410,10 +411,11 @@ impl AmplitudeEncoder {
 impl AmplitudeEncoder {
     /// Compute inverse L2 norm on GPU using the reduction kernel.
     #[cfg(target_os = "linux")]
-    fn calculate_inv_norm_gpu(
+    pub(crate) fn calculate_inv_norm_gpu(
         device: &Arc<CudaDevice>,
         input_ptr: *const f64,
         len: usize,
+        stream: *mut c_void,
     ) -> Result<f64> {
         crate::profile_scope!("GPU::NormSingle");
 
@@ -426,7 +428,7 @@ impl AmplitudeEncoder {
                 input_ptr,
                 len,
                 *norm_buffer.device_ptr_mut() as *mut f64,
-                std::ptr::null_mut(), // default stream
+                stream,
             )
         };
 
@@ -436,6 +438,73 @@ impl AmplitudeEncoder {
                 ret,
                 cuda_error_to_string(ret)
             )));
+        }
+
+        // Ensure the reduction and finalize kernels on `stream` are complete
+        // before reading back the result.
+        unsafe {
+            let sync_ret = crate::gpu::cuda_ffi::cudaStreamSynchronize(stream);
+            if sync_ret != 0 {
+                return Err(MahoutError::Cuda(format!(
+                    "cudaStreamSynchronize failed after norm kernel: {}",
+                    sync_ret
+                )));
+            }
+        }
+
+        let inv_norm_host = device
+            .dtoh_sync_copy(&norm_buffer)
+            .map_err(|e| MahoutError::Cuda(format!("Failed to copy norm to host: {:?}", e)))?;
+
+        let inv_norm = inv_norm_host.first().copied().unwrap_or(0.0);
+        if inv_norm == 0.0 || !inv_norm.is_finite() {
+            return Err(MahoutError::InvalidInput(
+                "Input data has zero norm".to_string(),
+            ));
+        }
+
+        Ok(inv_norm)
+    }
+
+    /// Compute inverse L2 norm on GPU for float32 input.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn calculate_inv_norm_gpu_f32(
+        device: &Arc<CudaDevice>,
+        input_ptr: *const f32,
+        len: usize,
+        stream: *mut c_void,
+    ) -> Result<f32> {
+        crate::profile_scope!("GPU::NormSingleF32");
+
+        let mut norm_buffer = device.alloc_zeros::<f32>(1).map_err(|e| {
+            MahoutError::MemoryAllocation(format!("Failed to allocate norm buffer: {:?}", e))
+        })?;
+
+        let ret = unsafe {
+            qdp_kernels::launch_l2_norm_f32(
+                input_ptr,
+                len,
+                *norm_buffer.device_ptr_mut() as *mut f32,
+                stream,
+            )
+        };
+
+        if ret != 0 {
+            return Err(MahoutError::KernelLaunch(format!(
+                "Norm kernel (f32) failed: {} ({})",
+                ret,
+                cuda_error_to_string(ret)
+            )));
+        }
+
+        unsafe {
+            let sync_ret = crate::gpu::cuda_ffi::cudaStreamSynchronize(stream);
+            if sync_ret != 0 {
+                return Err(MahoutError::Cuda(format!(
+                    "cudaStreamSynchronize failed after norm kernel (f32): {}",
+                    sync_ret
+                )));
+            }
         }
 
         let inv_norm_host = device

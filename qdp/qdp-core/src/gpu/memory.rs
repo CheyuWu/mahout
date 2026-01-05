@@ -215,6 +215,67 @@ unsafe impl Send for GpuStateVector {}
 unsafe impl Sync for GpuStateVector {}
 
 impl GpuStateVector {
+    /// Create GPU state vector for n qubits with requested precision.
+    ///
+    /// Allocates `2^qubits` complex numbers on GPU.
+    pub fn new_with_precision(
+        device: &Arc<CudaDevice>,
+        qubits: usize,
+        precision: Precision,
+    ) -> Result<Self> {
+        let size_elements: usize = 1usize << qubits;
+
+        #[cfg(target_os = "linux")]
+        {
+            match precision {
+                Precision::Float64 => Self::new(device, qubits),
+                Precision::Float32 => {
+                    let requested_bytes = size_elements
+                        .checked_mul(std::mem::size_of::<CuComplex>())
+                        .ok_or_else(|| {
+                            MahoutError::MemoryAllocation(format!(
+                                "Requested GPU allocation size overflow (elements={})",
+                                size_elements
+                            ))
+                        })?;
+
+                    ensure_device_memory_available(
+                        requested_bytes,
+                        "state vector allocation (float32)",
+                        Some(qubits),
+                    )?;
+
+                    let slice =
+                        unsafe { device.alloc::<CuComplex>(size_elements) }.map_err(|e| {
+                            map_allocation_error(
+                                requested_bytes,
+                                "state vector allocation (float32)",
+                                Some(qubits),
+                                e,
+                            )
+                        })?;
+
+                    Ok(Self {
+                        buffer: Arc::new(BufferStorage::F32(GpuBufferRaw { slice })),
+                        num_qubits: qubits,
+                        size_elements,
+                        num_samples: None,
+                        device_id: device.ordinal(),
+                    })
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (device, qubits, precision);
+            Err(MahoutError::Cuda(
+                "CUDA is only available on Linux. This build does not support GPU operations."
+                    .to_string(),
+            ))
+        }
+    }
+
     /// Create GPU state vector for n qubits
     /// Allocates 2^n complex numbers on GPU (freed on drop)
     pub fn new(_device: &Arc<CudaDevice>, qubits: usize) -> Result<Self> {
