@@ -157,18 +157,24 @@ fn validate_tensor(tensor: &Bound<'_, PyAny>) -> PyResult<()> {
     if !is_pytorch_tensor(tensor)? {
         return Err(PyRuntimeError::new_err("Object is not a PyTorch Tensor"));
     }
-
-    let device = tensor.getattr("device")?;
-    let device_type: String = device.getattr("type")?.extract()?;
-
-    if device_type != "cpu" {
-        return Err(PyRuntimeError::new_err(format!(
-            "Only CPU tensors are currently supported for this path. Got device: {}",
-            device_type
-        )));
-    }
-
     Ok(())
+}
+
+struct DlpackInputGuard {
+    ptr: *mut DLManagedTensor,
+}
+
+impl Drop for DlpackInputGuard {
+    fn drop(&mut self) {
+        if self.ptr.is_null() {
+            return;
+        }
+        unsafe {
+            if let Some(deleter) = (*self.ptr).deleter {
+                deleter(self.ptr);
+            }
+        }
+    }
 }
 
 /// PyO3 wrapper for QdpEngine
@@ -177,6 +183,7 @@ fn validate_tensor(tensor: &Bound<'_, PyAny>) -> PyResult<()> {
 #[pyclass]
 struct QdpEngine {
     engine: CoreEngine,
+    device_id: usize,
 }
 
 #[pymethods]
@@ -208,7 +215,7 @@ impl QdpEngine {
 
         let engine = CoreEngine::new_with_precision(device_id, precision)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to initialize: {}", e)))?;
-        Ok(Self { engine })
+        Ok(Self { engine, device_id })
     }
 
     /// Encode classical data into quantum state
@@ -310,6 +317,236 @@ impl QdpEngine {
         encoding_method: &str,
     ) -> PyResult<QuantumTensor> {
         validate_tensor(tensor)?;
+
+        let device = tensor.getattr("device")?;
+        let device_type: String = device.getattr("type")?.extract()?;
+
+        // CUDA path: consume DLPack to get a device pointer (zero-copy).
+        if device_type == "cuda" {
+            let device_index: Option<i64> = device.getattr("index")?.extract()?;
+            if let Some(idx) = device_index {
+                if idx < 0 {
+                    return Err(PyRuntimeError::new_err("Invalid CUDA device index"));
+                }
+                if idx as usize != self.device_id {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Tensor is on CUDA device {}, but engine was initialized for device {}",
+                        idx, self.device_id
+                    )));
+                }
+            }
+
+            let is_contiguous: bool = tensor.call_method0("is_contiguous")?.extract()?;
+            if !is_contiguous {
+                return Err(PyRuntimeError::new_err(
+                    "CUDA tensor must be contiguous for zero-copy encode_tensor()",
+                ));
+            }
+
+            // Request a DLPack capsule from PyTorch, on the current CUDA stream.
+            // This lets PyTorch synchronize producer work onto our consumer stream.
+            let py = tensor.py();
+            let torch = py
+                .import("torch")
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to import torch: {}", e)))?;
+            let cuda = torch.getattr("cuda")?;
+            let stream_obj = if let Some(idx) = device_index {
+                cuda.call_method1("current_stream", (idx,))?
+            } else {
+                cuda.call_method0("current_stream")?
+            };
+            let stream_u64: u64 = stream_obj.getattr("cuda_stream")?.extract()?;
+            if stream_u64 > i64::MAX as u64 {
+                return Err(PyRuntimeError::new_err(
+                    "CUDA stream pointer does not fit in i64",
+                ));
+            }
+            let stream_i64 = stream_u64 as i64;
+
+            let capsule = tensor
+                .call_method1("__dlpack__", (Some(stream_i64),))
+                .map_err(|e| {
+                    PyRuntimeError::new_err(format!(
+                        "Failed to obtain DLPack capsule from tensor: {}",
+                        e
+                    ))
+                })?;
+
+            // Validate and extract DLManagedTensor* from the capsule.
+            let name = c"dltensor";
+            let capsule_ptr = capsule.as_ptr();
+
+            let is_valid = unsafe { ffi::PyCapsule_IsValid(capsule_ptr, name.as_ptr()) };
+            if is_valid == 0 {
+                return Err(PyRuntimeError::new_err(
+                    "Invalid DLPack capsule (expected name 'dltensor')",
+                ));
+            }
+
+            let managed_ptr = unsafe {
+                ffi::PyCapsule_GetPointer(capsule_ptr, name.as_ptr()) as *mut DLManagedTensor
+            };
+
+            if managed_ptr.is_null() {
+                return Err(PyRuntimeError::new_err(
+                    "Failed to extract DLManagedTensor pointer from capsule",
+                ));
+            }
+
+            // Mark capsule as consumed to prevent accidental reuse.
+            let used_name = c"used_dltensor";
+            unsafe {
+                let _ = ffi::PyCapsule_SetName(capsule_ptr, used_name.as_ptr());
+            }
+
+            // Ensure deleter is called even on early-return.
+            let _guard = DlpackInputGuard { ptr: managed_ptr };
+
+            // Validate DLPack metadata and compute length.
+            let (dtype_bits, input_ptr, len) = unsafe {
+                let dl = &(*managed_ptr).dl_tensor;
+
+                // Device must be CUDA
+                match &dl.device.device_type {
+                    qdp_core::dlpack::DLDeviceType::kDLCUDA => {}
+                    other => {
+                        let other_code = match other {
+                            qdp_core::dlpack::DLDeviceType::kDLCPU => 1,
+                            qdp_core::dlpack::DLDeviceType::kDLCUDA => 2,
+                        };
+                        return Err(PyRuntimeError::new_err(format!(
+                            "DLPack tensor is not CUDA (device_type={})",
+                            other_code
+                        )));
+                    }
+                }
+
+                if dl.device.device_id < 0 {
+                    return Err(PyRuntimeError::new_err("Invalid DLPack device_id"));
+                }
+                if dl.device.device_id as usize != self.device_id {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "DLPack tensor is on CUDA device {}, but engine was initialized for device {}",
+                        dl.device.device_id, self.device_id
+                    )));
+                }
+
+                if dl.data.is_null() {
+                    return Err(PyRuntimeError::new_err("DLPack data pointer is null"));
+                }
+
+                // Support float32/float64 input (minimal).
+                if dl.dtype.code != qdp_core::dlpack::DL_FLOAT || dl.dtype.lanes != 1 {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Unsupported CUDA tensor dtype for encode_tensor: code={}, bits={}, lanes={}",
+                        dl.dtype.code, dl.dtype.bits, dl.dtype.lanes
+                    )));
+                }
+
+                if dl.dtype.bits != 32 && dl.dtype.bits != 64 {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Unsupported CUDA tensor dtype bits for encode_tensor: {}",
+                        dl.dtype.bits
+                    )));
+                }
+
+                let ndim = dl.ndim as usize;
+                if ndim == 0 || dl.shape.is_null() {
+                    return Err(PyRuntimeError::new_err("Invalid DLPack shape metadata"));
+                }
+
+                let shape = std::slice::from_raw_parts(dl.shape, ndim);
+
+                // Compute element count (support 1D or contiguous 2D).
+                let elem_count: usize = if ndim == 1 {
+                    shape[0]
+                        .try_into()
+                        .map_err(|_| PyRuntimeError::new_err("Negative shape dimension"))?
+                } else if ndim == 2 {
+                    let rows: usize = shape[0]
+                        .try_into()
+                        .map_err(|_| PyRuntimeError::new_err("Negative shape dimension"))?;
+                    let cols: usize = shape[1]
+                        .try_into()
+                        .map_err(|_| PyRuntimeError::new_err("Negative shape dimension"))?;
+                    // If strides are provided, enforce row-major contiguous.
+                    if !dl.strides.is_null() {
+                        let strides = std::slice::from_raw_parts(dl.strides, ndim);
+                        if strides[1] != 1 || strides[0] != shape[1] {
+                            return Err(PyRuntimeError::new_err(
+                                "Only row-major contiguous 2D CUDA tensors are supported",
+                            ));
+                        }
+                    }
+                    rows.saturating_mul(cols)
+                } else {
+                    return Err(PyRuntimeError::new_err(
+                        "Only 1D or 2D CUDA tensors are supported for encode_tensor",
+                    ));
+                };
+
+                if elem_count == 0 {
+                    return Err(PyRuntimeError::new_err("Input tensor cannot be empty"));
+                }
+
+                let byte_offset = dl.byte_offset as usize;
+                let elem_size = (dl.dtype.bits as usize) / 8;
+                if elem_size == 0 {
+                    return Err(PyRuntimeError::new_err("Invalid DLPack dtype size"));
+                }
+                if byte_offset % elem_size != 0 {
+                    return Err(PyRuntimeError::new_err(
+                        "DLPack byte_offset is not aligned for tensor dtype",
+                    ));
+                }
+
+                let base = (dl.data as *const u8).add(byte_offset);
+                (dl.dtype.bits, base, elem_count)
+            };
+
+            // Encode directly from device pointer on the same CUDA stream.
+            let stream_ptr = stream_u64 as *mut std::ffi::c_void;
+            let ptr = if dtype_bits == 64 {
+                let input_ptr_f64 = input_ptr as *const f64;
+                unsafe {
+                    self.engine
+                        .encode_device_f64_ptr(
+                            input_ptr_f64,
+                            len,
+                            num_qubits,
+                            encoding_method,
+                            stream_ptr,
+                        )
+                        .map_err(|e| PyRuntimeError::new_err(format!("Encoding failed: {}", e)))?
+                }
+            } else {
+                let input_ptr_f32 = input_ptr as *const f32;
+                unsafe {
+                    self.engine
+                        .encode_device_f32_ptr(
+                            input_ptr_f32,
+                            len,
+                            num_qubits,
+                            encoding_method,
+                            stream_ptr,
+                        )
+                        .map_err(|e| PyRuntimeError::new_err(format!("Encoding failed: {}", e)))?
+                }
+            };
+
+            return Ok(QuantumTensor {
+                ptr,
+                consumed: false,
+            });
+        }
+
+        // CPU path (existing): flatten -> tolist -> Vec<f64>.
+        if device_type != "cpu" {
+            return Err(PyRuntimeError::new_err(format!(
+                "Unsupported tensor device type: {}",
+                device_type
+            )));
+        }
 
         // NOTE(perf): `tolist()` + `extract()` makes extra copies (Tensor -> Python list -> Vec).
         // TODO: follow-up PR can use `numpy()`/buffer protocol (and possibly pinned host memory)
