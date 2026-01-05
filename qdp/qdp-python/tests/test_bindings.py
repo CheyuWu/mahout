@@ -182,10 +182,62 @@ def test_encode_tensor_errors():
     with pytest.raises(RuntimeError, match="Object is not a PyTorch Tensor"):
         engine.encode_tensor([1.0, 2.0], 1, "amplitude")
 
-    # Test GPU tensor input (should fail as only CPU is supported for this path)
-    if torch.cuda.is_available():
-        gpu_tensor = torch.tensor([1.0, 2.0], device="cuda:0")
-        with pytest.raises(
-            RuntimeError, match="Only CPU tensors are currently supported"
-        ):
-            engine.encode_tensor(gpu_tensor, 1, "amplitude")
+    # Non-contiguous CUDA tensor should be rejected (we don't do implicit copies).
+    non_contig = torch.randn(2, 4, device="cuda:0", dtype=torch.float32).t()
+    assert not non_contig.is_contiguous()
+    with pytest.raises(RuntimeError, match="must be contiguous"):
+        engine.encode_tensor(non_contig, 2, "amplitude")
+
+    # Unsupported dtype (e.g., int64) should be rejected.
+    bad_dtype = torch.tensor([1, 2, 3, 4], device="cuda:0", dtype=torch.int64)
+    with pytest.raises(RuntimeError, match="Unsupported CUDA tensor dtype"):
+        engine.encode_tensor(bad_dtype, 2, "amplitude")
+
+
+@pytest.mark.gpu
+def test_encode_tensor_cuda_roundtrip():
+    """Test encoding from CUDA float32 tensor (zero-copy input)."""
+    pytest.importorskip("torch")
+    import torch
+    from mahout_qdp import QdpEngine
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    engine = QdpEngine(0, precision="float32")
+    data = torch.randn(4, device="cuda:0", dtype=torch.float32)
+
+    qtensor = engine.encode_tensor(data, 2, "amplitude")
+
+    out = torch.from_dlpack(qtensor)
+    assert out.is_cuda
+    assert out.shape == (1, 4)
+    assert out.dtype == torch.complex64
+
+
+@pytest.mark.gpu
+def test_encode_tensor_cuda_float64_input():
+    """Test encoding from CUDA float64 tensor (zero-copy input)."""
+    pytest.importorskip("torch")
+    import torch
+    from mahout_qdp import QdpEngine
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    # Output precision float64 => complex128
+    engine64 = QdpEngine(0, precision="float64")
+    data64 = torch.randn(4, device="cuda:0", dtype=torch.float64)
+    qtensor64 = engine64.encode_tensor(data64, 2, "amplitude")
+    out64 = torch.from_dlpack(qtensor64)
+    assert out64.is_cuda
+    assert out64.shape == (1, 4)
+    assert out64.dtype == torch.complex128
+
+    # Output precision float32 => complex64 (core converts state)
+    engine32 = QdpEngine(0, precision="float32")
+    qtensor32 = engine32.encode_tensor(data64, 2, "amplitude")
+    out32 = torch.from_dlpack(qtensor32)
+    assert out32.is_cuda
+    assert out32.shape == (1, 4)
+    assert out32.dtype == torch.complex64
