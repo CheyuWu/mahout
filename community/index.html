@@ -14,6 +14,7 @@
   <meta name="description" content="Distributed Linear Algebra">
 
   <link rel="stylesheet" href="/assets/css/main.css">
+  <link rel="stylesheet" href="/assets/css/github-markdown.css">
 
   <!-- Font Awesome -->
   <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" integrity="sha384-wvfXpqpZZVQGK6TAh5PVlGOfQNHSoD2xbE+QkPxCAFlNEevoEH3Sl0sibVcOQVnN" crossorigin="anonymous">
@@ -100,6 +101,7 @@
                     </div>
                 </li>
 
+                <!-- Qumat -->
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle"
                        href="" id="navbarDropdownMenuLink-qumat"
@@ -108,28 +110,15 @@
                        aria-expanded="false">Qumat</a>
                     <div class="dropdown-menu" aria-labelledby="navbarDropdownMenuLink">
                         <a class="dropdown-item"
-                           href="/quantum-computing-primer">Quantum Computing Primer</a>
-<!--                        TODO: Add More QuMat stuff here or refactor the whole thing-->
-                    </div>
-                </li>
-                <!-- Documentation -->
-                <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle"
-                       href="" id="navbarDropdownMenuLink-docs"
-                       data-toggle="dropdown"
-                       aria-haspopup="true"
-                       aria-expanded="false">Documentation</a>
-                    <div class="dropdown-menu" aria-labelledby="navbarDropdownMenuLink">
+                           href="/qumat">Overview</a>
                         <a class="dropdown-item"
-                           href="/papers.html">Papers</a>
+                           href="/qumat/core">Qumat Core</a>
                         <a class="dropdown-item"
-                           href="/documentation/users">User Guide</a>
+                           href="/qumat/qdp">QDP (Quantum Data Plane)</a>
                         <a class="dropdown-item"
-                           href="/documentation/developers">Developer Guide</a>
+                           href="/qumat/quantum-computing-primer">Quantum Computing Primer</a>
                         <a class="dropdown-item"
-                           href="/docs/0.13.0/api/docs/">API Reference</a>
-                        <a class="dropdown-item"
-                           href="/documentation/tutorials">Tutorials and Examples</a>
+                           href="/qumat/papers">Papers</a>
                     </div>
                 </li>
 
@@ -177,10 +166,10 @@
                     <a class="nav-link dropdown-toggle"
                        href="/news-and-events/news.html" id="navbarDropdownMenuLink-news-events"
                        aria-haspopup="true"
-                       aria-expanded="false">Latest Project News</a>
+                       aria-expanded="false">News</a>
                     <div class="dropdown-menu" aria-labelledby="navbarDropdownMenuLink">
                         <a class="dropdown-item"
-                           href="/news-and-events/news.html">Latest Project News</a>
+                           href="/news-and-events/news.html">News</a>
                     </div>
                 </li>
 
@@ -208,7 +197,7 @@
 
   <div class="row">
 
-    <div class="col-lg-8">
+    <div class="col-lg-8 markdown-body">
       <h1 id="community-overview">Community Overview</h1>
 
 <p>The Apache Mahout community consists of developers, users, data scientists, researchers, and open-source contributors who collaborate to build scalable machine-learning libraries on the Apache platform.
@@ -216,7 +205,13 @@ Mahout follows the principles of the Apache Software Foundation — openness, tr
 
 <p>This page explains the official communication channels, how to participate, and how to contribute to the project.</p>
 
-<hr />
+<!-- <<<<<<< other -->
+<p>There are numerous ways to engage with the Mahout community, no matter your background or skill level. Some options include:</p>
+<h2 id="biweekly-community-meeting">Biweekly Community Meeting</h2>
+<p>Apache Mahout is committed to work consistently and conducts its meetings once in two weeks. To get invovled, you can access the link here. The meeting timings are communicated via official slack channel.
+<a href="https://meet.google.com/hjo-njer-hzw?authuser=0&amp;hs=122&amp;ijlm=1767371505662&amp;pli=1">Meeting Link</a>
+=======
+—</p>
 
 <h2 id="how-to-participate">How to Participate</h2>
 
@@ -236,7 +231,8 @@ https://lists.apache.org/list.html?dev@mahout.apache.org</p>
   </li>
 </ul>
 
-<p>To subscribe, send an empty email to:</p>
+<p>To subscribe, send an empty email to:
+<!-- >>>>>>> main --></p>
 
 <ul>
   <li><code class="language-plaintext highlighter-rouge">user-subscribe@mahout.apache.org</code></li>
@@ -315,7 +311,18 @@ Contributions of all kinds — code, documentation, discussion, or feedback — 
     </div>
 
     <div class="col-lg-4">
-      <!-- Apache Software Foundation Links -->
+      <!-- Qumat Release Banner -->
+<div class="card mb-4 sidebar">
+    <div class="card-header">
+        🚀 Qumat 0.4 Released!
+    </div>
+    <div class="card-body">
+        <p class="mb-2">Mahout's new quantum computing layer for building ML circuits on simulators and real quantum hardware.</p>
+        <a href="/download/downloads.html">Download Qumat 0.4 →</a>
+    </div>
+</div>
+
+<!-- Apache Software Foundation Links -->
 <div class="card mb-4 sidebar">
     <div class="card-header">
         Apache Software Foundation
@@ -368,7 +375,7 @@ Contributions of all kinds — code, documentation, discussion, or feedback — 
 
   <footer class="footer bg-light">
     <div class="container text-center small">
-        Copyright &copy; 2014-2025 <a href="http://www.apache.org/">The Apache Software Foundation</a>, Licensed under the Apache License, Version 2.0.
+        Copyright &copy; 2014-2026 <a href="http://www.apache.org/">The Apache Software Foundation</a>, Licensed under the Apache License, Version 2.0.
     </div>
 </footer>
 

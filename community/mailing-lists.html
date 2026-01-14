@@ -14,6 +14,7 @@
   <meta name="description" content="Distributed Linear Algebra">
 
   <link rel="stylesheet" href="/assets/css/main.css">
+  <link rel="stylesheet" href="/assets/css/github-markdown.css">
 
   <!-- Font Awesome -->
   <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" integrity="sha384-wvfXpqpZZVQGK6TAh5PVlGOfQNHSoD2xbE+QkPxCAFlNEevoEH3Sl0sibVcOQVnN" crossorigin="anonymous">
@@ -100,6 +101,7 @@
                     </div>
                 </li>
 
+                <!-- Qumat -->
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle"
                        href="" id="navbarDropdownMenuLink-qumat"
@@ -108,28 +110,15 @@
                        aria-expanded="false">Qumat</a>
                     <div class="dropdown-menu" aria-labelledby="navbarDropdownMenuLink">
                         <a class="dropdown-item"
-                           href="/quantum-computing-primer">Quantum Computing Primer</a>
-<!--                        TODO: Add More QuMat stuff here or refactor the whole thing-->
-                    </div>
-                </li>
-                <!-- Documentation -->
-                <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle"
-                       href="" id="navbarDropdownMenuLink-docs"
-                       data-toggle="dropdown"
-                       aria-haspopup="true"
-                       aria-expanded="false">Documentation</a>
-                    <div class="dropdown-menu" aria-labelledby="navbarDropdownMenuLink">
+                           href="/qumat">Overview</a>
                         <a class="dropdown-item"
-                           href="/papers.html">Papers</a>
+                           href="/qumat/core">Qumat Core</a>
                         <a class="dropdown-item"
-                           href="/documentation/users">User Guide</a>
+                           href="/qumat/qdp">QDP (Quantum Data Plane)</a>
                         <a class="dropdown-item"
-                           href="/documentation/developers">Developer Guide</a>
+                           href="/qumat/quantum-computing-primer">Quantum Computing Primer</a>
                         <a class="dropdown-item"
-                           href="/docs/0.13.0/api/docs/">API Reference</a>
-                        <a class="dropdown-item"
-                           href="/documentation/tutorials">Tutorials and Examples</a>
+                           href="/qumat/papers">Papers</a>
                     </div>
                 </li>
 
@@ -177,10 +166,10 @@
                     <a class="nav-link dropdown-toggle"
                        href="/news-and-events/news.html" id="navbarDropdownMenuLink-news-events"
                        aria-haspopup="true"
-                       aria-expanded="false">Latest Project News</a>
+                       aria-expanded="false">News</a>
                     <div class="dropdown-menu" aria-labelledby="navbarDropdownMenuLink">
                         <a class="dropdown-item"
-                           href="/news-and-events/news.html">Latest Project News</a>
+                           href="/news-and-events/news.html">News</a>
                     </div>
                 </li>
 
@@ -208,37 +197,33 @@
 
   <div class="row">
 
-    <div class="col-lg-8">
+    <div class="col-lg-8 markdown-body">
       <h1 id="general">General</h1>
 
 <p>Communication at Mahout happens primarily online via mailing lists. We have
-a user as well as a dev list for discussion. In addition there is a commit
-list so we are able to monitor what happens on the wiki and in svn.</p>
+a user as well as a dev list for discussion. In addition, there is a commit
+list so we are able to monitor what happens in the GitHub repository.</p>
 
-<p><a name="MailingLists,IRCandArchives-Mailinglists"></a></p>
 <h1 id="mailing-lists">Mailing lists</h1>
 
 <h2 id="how-to-subscribeunsubscribe">How to subscribe/unsubscribe</h2>
 
-<p>Follow the links below, or send mail manually, with empty subject and body.</p>
+<p>Follow the links below, or send mail manually, with empty subject and body.
+The pattern for subscribing and unsubscribing to mailing lists at the ASF is
+<code class="language-plaintext highlighter-rouge">&lt;list-name&gt;-&lt;action&gt;@&lt;project&gt;.apache.org</code>.</p>
 
-<p>The pattern for subscribing and unsubscribing to  mailing lists at the ASF
-is &lt;list-name&gt;-&lt;action&gt;@&lt;project.&gt;apache.org.</p>
-
-<p><a name="MailingLists,IRCandArchives-MahoutUserList"></a></p>
 <h2 id="mahout-user-list">Mahout User List</h2>
 
 <p>This list is for users of Mahout to ask questions, share knowledge, and
 discuss issues. Do send mail to this list with usage and configuration
 questions and problems. Also, please send questions to this list to verify
-your problem before filing issues in JIRA.</p>
+your problem before filing issues on GitHub.</p>
 
 <ul>
   <li><a href="mailto:user-subscribe@mahout.apache.org">Subscribe</a></li>
   <li><a href="mailto:user-unsubscribe@mahout.apache.org">Unsubscribe</a></li>
 </ul>
 
-<p><a name="MailingLists,IRCandArchives-MahoutDeveloperList"></a></p>
 <h2 id="mahout-developer-list">Mahout Developer List</h2>
 
 <p>This is the list where participating developers of the Mahout project meet
@@ -246,51 +231,57 @@ and discuss issues concerning Mahout internals, code changes/additions,
 etc. Do not send mail to this list with usage questions or configuration
 questions and problems.</p>
 
-<p>Discussion list:</p>
+<p><strong>Discussion list:</strong></p>
 
 <ul>
-  <li><a href="mailto:dev-subscribe@mahout.apache.org">Subscribe</a>
- – Do not send mail to this list with usage questions or configuration
-questions and problems.</li>
+  <li><a href="mailto:dev-subscribe@mahout.apache.org">Subscribe</a></li>
   <li><a href="mailto:dev-unsubscribe@mahout.apache.org">Unsubscribe</a></li>
 </ul>
 
-<p>Commit notifications:</p>
+<p><strong>Commit notifications:</strong></p>
 
 <ul>
   <li><a href="mailto:commits-subscribe@mahout.apache.org">Subscribe</a></li>
   <li><a href="mailto:commits-unsubscribe@mahout.apache.org">Unsubscribe</a></li>
 </ul>
 
-<p><a name="MailingLists,IRCandArchives-IRC"></a></p>
 <h1 id="irc">IRC</h1>
 
-<p>Mahout’s IRC channel is <strong>#mahout</strong>.  It is a logged channel.  Please keep in
+<p>Mahout’s IRC channel is <strong>#mahout</strong>. It is a logged channel. Please keep in
 mind that it is for discussion purposes only and that (pseudo)decisions
-should be brought back to the dev@ mailing list or JIRA and other people
-who are not on IRC should be given time to respond before any work is
-committed.</p>
+should be brought back to the dev@ mailing list or GitHub issues, and other
+people who are not on IRC should be given time to respond before any work
+is committed.</p>
 
-<p><a name="MailingLists,IRCandArchives-Archives"></a></p>
 <h1 id="archives">Archives</h1>
 
-<p><a name="MailingLists,IRCandArchives-OfficialApacheArchive"></a></p>
 <h2 id="official-apache-archive">Official Apache Archive</h2>
 
 <ul>
-  <li><a href="http://mail-archives.apache.org/mod_mbox/mahout-dev/">http://mail-archives.apache.org/mod_mbox/mahout-dev/</a></li>
-  <li><a href="http://mail-archives.apache.org/mod_mbox/mahout-user/">http://mail-archives.apache.org/mod_mbox/mahout-user/</a></li>
+  <li>https://mail-archives.apache.org/mod_mbox/mahout-dev/</li>
+  <li>https://mail-archives.apache.org/mod_mbox/mahout-user/</li>
 </ul>
 
 <p>Please note the inclusion of a link to an archive does not imply an
-endorsement of that company by any of the committers of Mahout the Lucene
-PMC or the Apache Software Foundation. Each archive owner is solely
+endorsement of that company by any of the committers of Mahout, the Lucene
+PMC, or the Apache Software Foundation. Each archive owner is solely
 responsible for the contents and availability of their archive.</p>
 
     </div>
 
     <div class="col-lg-4">
-      <!-- Apache Software Foundation Links -->
+      <!-- Qumat Release Banner -->
+<div class="card mb-4 sidebar">
+    <div class="card-header">
+        🚀 Qumat 0.4 Released!
+    </div>
+    <div class="card-body">
+        <p class="mb-2">Mahout's new quantum computing layer for building ML circuits on simulators and real quantum hardware.</p>
+        <a href="/download/downloads.html">Download Qumat 0.4 →</a>
+    </div>
+</div>
+
+<!-- Apache Software Foundation Links -->
 <div class="card mb-4 sidebar">
     <div class="card-header">
         Apache Software Foundation
@@ -343,7 +334,7 @@ responsible for the contents and availability of their archive.</p>
 
   <footer class="footer bg-light">
     <div class="container text-center small">
-        Copyright &copy; 2014-2025 <a href="http://www.apache.org/">The Apache Software Foundation</a>, Licensed under the Apache License, Version 2.0.
+        Copyright &copy; 2014-2026 <a href="http://www.apache.org/">The Apache Software Foundation</a>, Licensed under the Apache License, Version 2.0.
     </div>
 </footer>
 
