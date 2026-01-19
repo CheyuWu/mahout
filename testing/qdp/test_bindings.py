@@ -253,11 +253,6 @@ def test_encode_errors():
     with pytest.raises(RuntimeError, match="Unsupported data type"):
         engine.encode({"key": "value"}, 2, "amplitude")
 
-    # Test GPU tensor input (should fail as only CPU is supported)
-    gpu_tensor = torch.tensor([1.0, 2.0], device="cuda:0")
-    with pytest.raises(RuntimeError, match="Only CPU tensors are currently supported"):
-        engine.encode(gpu_tensor, 1, "amplitude")
-
 
 @pytest.mark.gpu
 def test_basis_encode_basic():

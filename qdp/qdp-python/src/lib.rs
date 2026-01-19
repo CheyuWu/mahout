@@ -151,26 +151,6 @@ fn is_pytorch_tensor(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     let module_name = module.to_str()?;
     Ok(module_name == "torch")
 }
-
-/// Helper to validate tensor
-fn validate_tensor(tensor: &Bound<'_, PyAny>) -> PyResult<()> {
-    if !is_pytorch_tensor(tensor)? {
-        return Err(PyRuntimeError::new_err("Object is not a PyTorch Tensor"));
-    }
-
-    let device = tensor.getattr("device")?;
-    let device_type: String = device.getattr("type")?.extract()?;
-
-    if device_type != "cpu" {
-        return Err(PyRuntimeError::new_err(format!(
-            "Only CPU tensors are currently supported for this path. Got device: {}",
-            device_type
-        )));
-    }
-
-    Ok(())
-}
-
 /// PyO3 wrapper for QdpEngine
 ///
 /// Provides Python bindings for GPU-accelerated quantum state encoding.
@@ -321,14 +301,17 @@ impl QdpEngine {
 
         // Check if it's a PyTorch tensor
         if is_pytorch_tensor(data)? {
-            validate_tensor(data)?;
-            // PERF: Avoid Tensor -> Python list -> Vec deep copies.
-            //
-            // For CPU tensors, `tensor.detach().numpy()` returns a NumPy view that shares the same
-            // underlying memory (zero-copy) when the tensor is C-contiguous. We can then borrow a
-            // `&[f64]` directly via pyo3-numpy.
-            let ndim: usize = data.call_method0("dim")?.extract()?;
-            let numpy_view = data
+            let device = data.getattr("device")?;
+            let device_type: String = device.getattr("type")?.extract()?;
+
+            if device_type == "cpu" {
+                // PERF: Avoid Tensor -> Python list -> Vec deep copies.
+                //
+                // For CPU tensors, `tensor.detach().numpy()` returns a NumPy view that shares the same
+                // underlying memory (zero-copy) when the tensor is C-contiguous. We can then borrow a
+                // `&[f64]` directly via pyo3-numpy.
+                let ndim: usize = data.call_method0("dim")?.extract()?;
+                let numpy_view = data
                 .call_method0("detach")?
                 .call_method0("numpy")
                 .map_err(|_| {
@@ -338,7 +321,7 @@ impl QdpEngine {
                     )
                 })?;
 
-            let array = numpy_view
+                let array = numpy_view
                 .extract::<PyReadonlyArrayDyn<f64>>()
                 .map_err(|_| {
                     PyRuntimeError::new_err(
@@ -347,57 +330,62 @@ impl QdpEngine {
                     )
                 })?;
 
-            let data_slice = array.as_slice().map_err(|_| {
-                PyRuntimeError::new_err(
-                    "Tensor must be contiguous (C-order) to get zero-copy slice \
+                let data_slice = array.as_slice().map_err(|_| {
+                    PyRuntimeError::new_err(
+                        "Tensor must be contiguous (C-order) to get zero-copy slice \
                      (try: tensor = tensor.contiguous())",
-                )
-            })?;
+                    )
+                })?;
 
-            match ndim {
-                1 => {
-                    // 1D tensor: single sample encoding
-                    let ptr = self
-                        .engine
-                        .encode(data_slice, num_qubits, encoding_method)
-                        .map_err(|e| PyRuntimeError::new_err(format!("Encoding failed: {}", e)))?;
-                    return Ok(QuantumTensor {
-                        ptr,
-                        consumed: false,
-                    });
-                }
-                2 => {
-                    // 2D tensor: batch encoding
-                    let shape = array.shape();
-                    if shape.len() != 2 {
+                match ndim {
+                    1 => {
+                        // 1D tensor: single sample encoding
+                        let ptr = self
+                            .engine
+                            .encode(data_slice, num_qubits, encoding_method)
+                            .map_err(|e| {
+                                PyRuntimeError::new_err(format!("Encoding failed: {}", e))
+                            })?;
+                        return Ok(QuantumTensor {
+                            ptr,
+                            consumed: false,
+                        });
+                    }
+                    2 => {
+                        // 2D tensor: batch encoding
+                        let shape = array.shape();
+                        if shape.len() != 2 {
+                            return Err(PyRuntimeError::new_err(format!(
+                                "Unsupported tensor shape: {}D. Expected 2D tensor (batch_size, features).",
+                                shape.len()
+                            )));
+                        }
+                        let num_samples = shape[0];
+                        let sample_size = shape[1];
+                        let ptr = self
+                            .engine
+                            .encode_batch(
+                                data_slice,
+                                num_samples,
+                                sample_size,
+                                num_qubits,
+                                encoding_method,
+                            )
+                            .map_err(|e| {
+                                PyRuntimeError::new_err(format!("Encoding failed: {}", e))
+                            })?;
+                        return Ok(QuantumTensor {
+                            ptr,
+                            consumed: false,
+                        });
+                    }
+                    _ => {
                         return Err(PyRuntimeError::new_err(format!(
-                            "Unsupported tensor shape: {}D. Expected 2D tensor (batch_size, features).",
-                            shape.len()
+                            "Unsupported tensor shape: {}D. Expected 1D tensor for single sample \
+                         encoding or 2D tensor (batch_size, features) for batch encoding.",
+                            ndim
                         )));
                     }
-                    let num_samples = shape[0];
-                    let sample_size = shape[1];
-                    let ptr = self
-                        .engine
-                        .encode_batch(
-                            data_slice,
-                            num_samples,
-                            sample_size,
-                            num_qubits,
-                            encoding_method,
-                        )
-                        .map_err(|e| PyRuntimeError::new_err(format!("Encoding failed: {}", e)))?;
-                    return Ok(QuantumTensor {
-                        ptr,
-                        consumed: false,
-                    });
-                }
-                _ => {
-                    return Err(PyRuntimeError::new_err(format!(
-                        "Unsupported tensor shape: {}D. Expected 1D tensor for single sample \
-                         encoding or 2D tensor (batch_size, features) for batch encoding.",
-                        ndim
-                    )));
                 }
             }
         }
